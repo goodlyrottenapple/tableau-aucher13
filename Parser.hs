@@ -196,7 +196,6 @@ parseModel' inp = case parse (m_whiteSpace >> modelFileParser) "" inp of
 readWorldFile fileName = do 
   contents <- readFile fileName
 
-  -- contents <- hGetContents handle
   res <- case parse (m_whiteSpace >> modelFileParser) "" contents of
     Left err -> do
       print err

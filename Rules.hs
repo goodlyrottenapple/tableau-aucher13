@@ -79,38 +79,6 @@ arrNegP :: URule
 arrNegP (Form σ lΣ (Neg (At p))) = [S.singleton (Form σ [] (Neg (At p)))]
 arrNegP _ = []
 
---                (σ M′1,w1′;...;M′i,wi′ Baφ)
---                (σ Ra σ1)
--- --------------------------------------------------------
--- (σ1 M′1,u′1;...;M′i,u′i OK) | (σ1 M′1,u′1;...;M′i,u′i ⊗)
--- (σ1 M′1,u′1;...;M′i,u′i φ)  |
-ba :: Map World World -> BRule
-ba r ((Form σ lΣ (B a φ)) , (R σ' a' σ1))
-    | σ == σ' && a == a' = [
-        S.fromList [
-                (Valid σ1 (map (updateModel r) lΣ)),
-                (Form σ1 (map (updateModel r) lΣ) φ)
-            ],
-        S.singleton (Invalid σ1 (map (updateModel r) lΣ))
-    ]
-    | otherwise = []
-ba r ((R σ' a' σ1) , (Form σ lΣ (B a φ))) = 
-    ba r ((Form σ lΣ (B a φ)) , (R σ' a' σ1))
-ba _ _ = []
-
--- (σ M′1,w1′;...;M′i,wi′ ¬Baφ)
--- ----------------------------
--- (σ Ra σnew)
--- (σnew M′1,u′1;...;M′i,u′i OK)
--- (σnew M′1,u′1;...;M′i,u′i ¬φ)
-negBa :: Map World World -> Lab -> URule
-negBa r σNew (Form σ lΣ (Neg (B a φ))) = [S.fromList [
-        (R σ a σNew),
-        (Valid σNew (map (updateModel r) lΣ)),
-        (Form σNew (map (updateModel r) lΣ) (Neg φ))
-    ]]
-negBa _ _ _ = []
-
 -- (σ Σ′ ¬[M′, w′]φ)
 -- -----------------
 --  (σ Σ′;M′,w′ OK)
@@ -200,3 +168,145 @@ negBoxUnion (Form σ lΣ (Neg ((π :∪: γ) :□: φ))) = [
         S.singleton (Form σ lΣ (Neg (γ :□: φ)))
     ]
 negBoxUnion _ = []
+
+
+
+
+
+unionMap :: Ord a => [Set a] -> [Set a] -> [Set a]
+unionMap [] s = s
+unionMap s [] = []
+unionMap s (x:xs) = map (S.union x) s ++ (unionMap s xs)
+
+
+getwRa :: Agt -> Model' -> Maybe (World, [World])
+getwRa agt (Model w r _) = do
+    ra <- M.lookup agt r
+    let us = [u | (w' , u) <- S.toList ra, w == w'] in
+        if null us then Nothing else return (w , us)
+
+getwRa's :: Agt -> [Model'] -> Maybe [(World, [World])]
+getwRa's agt ms = mapM (getwRa agt) ms
+
+genModelMapList :: Agt -> [Model'] -> Maybe (Set (Map World World))
+genModelMapList agt ms = do
+    lst <- getwRa's agt ms
+    return $ S.fromList $ map M.fromList $ aux2 lst
+
+    where
+        aux1 :: (a , [b]) -> [(a , b)]
+        aux1 (a , bs) = [ (a, b) | b <- bs ]
+
+        prod :: [a] -> [[a]] -> [[a]]
+        prod [] ys = []
+        prod (x:xs) ys = [x:y | y <- ys] ++ (prod xs ys)
+
+        aux2 :: [(a , [b])] -> [[(a , b)]]
+        aux2 [] = []
+        aux2 [x] = map (:[]) $ aux1 x
+        aux2 (x:xs) = aux1 x `prod` (aux2 xs)
+
+
+
+-- testGenModelMapList fileName ag = do 
+--   contents <- readFile fileName
+
+--   -- contents <- hGetContents handle
+--   case parseModel' contents of
+--     Just res -> do
+--         print res
+--         print $ getwRa ag $ head (M.elems res)
+--         print $ getwRa's ag (M.elems res)
+--         print $ genModelMapList ag (M.elems res)
+--     Nothing -> print $ genModelMapList "a1" []
+
+
+-- aggressively try applying the rule r to all TTerms in the set sΓ
+applyRuleA :: (Ord a, Show a) => (b -> [Set a]) -> [b] -> Set a -> [Set a]
+applyRuleA rule lst sΓ = S.toList $ S.fromList $ foldr 
+ ( \tterm lst -> (rule tterm) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+ [sΓ] lst
+
+
+-- aggressively try applying the Ba rule to all TTerms in the set sΓ
+
+--                (σ M′1,w1′;...;M′i,wi′ Baφ)
+--                (σ Ra σ1)
+-- --------------------------------------------------------
+-- (σ1 M′1,u′1;...;M′i,u′i OK) | (σ1 M′1,u′1;...;M′i,u′i ⊗)
+-- (σ1 M′1,u′1;...;M′i,u′i φ)  |
+applyBa :: [(TTerm, TTerm)] -> [Set TTerm] -> [Set TTerm]
+applyBa [] sΓ = sΓ
+applyBa ((((Form σ [] (B a φ)) , (R σ' a' σ1))):xs) sΓ 
+    | σ == σ' && a == a' = applyBa xs $ [
+        S.fromList [
+                (Valid σ1 []),
+                (Form σ1 [] φ)
+            ],
+        S.singleton (Invalid σ1 [])
+    ] `unionMap` sΓ
+    | otherwise = applyBa xs sΓ
+
+applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ 
+    | σ == σ' && a == a' = case genModelMapList a lΣ of
+    Just sΔ -> applyBa xs $ foldr
+        ( \δ sΓ' -> let δΣ = map (updateModel δ) lΣ in
+            [
+                S.fromList [
+                        (Valid σ1 δΣ),
+                        (Form σ1 δΣ φ)
+                    ],
+                S.singleton (Invalid σ1 δΣ)
+            ] `unionMap` sΓ'
+        )
+        sΓ (S.toList sΔ) 
+            -- ( \m lst -> (ba m (((Form σ lΣ (B a φ)) , (R σ' a' σ1)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+            -- sΓ (S.toList mapSet)
+    Nothing -> applyBa xs sΓ
+    | otherwise = applyBa xs sΓ
+applyBa ((((R σ' a' σ1) , (Form σ lΣ (B a φ)))):xs) sΓ = 
+        applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ
+applyBa (_:xs) sΓ = applyBa xs sΓ
+
+
+newLab :: Set TTerm -> Lab
+newLab set = (biggestLab (S.toList set) 0) + 1
+    where
+        biggestLab [] acc = acc
+        biggestLab ((Form l _ _):xs) acc | l > acc = biggestLab xs l
+                                         | otherwise = biggestLab xs acc
+        biggestLab (_:xs) acc = biggestLab xs acc                                   
+
+
+-- (σ M′1,w1′;...;M′i,wi′ ¬Baφ)
+-- ----------------------------
+-- (σ Ra σnew)
+-- (σnew M′1,u′1;...;M′i,u′i OK)
+-- (σnew M′1,u′1;...;M′i,u′i ¬φ)
+applyNBa :: [TTerm] -> Set TTerm -> Set TTerm
+applyNBa [] sΓ = sΓ
+applyNBa ( (Form σ [] (Neg (B a φ))) : xs ) sΓ = applyNBa xs $
+    S.fromList [
+        (R σ a σNew),
+        (Valid σNew []),
+        (Form σNew [] (Neg φ))
+    ] `S.union` sΓ
+
+    where σNew = newLab sΓ
+applyNBa ( (Form σ lΣ (Neg (B a φ))) : xs ) sΓ = case genModelMapList a lΣ of
+    Just sΔ -> applyNBa xs $ foldr 
+        ( \δ sΓ' -> let 
+                σNew = newLab sΓ'
+                δΣ = map (updateModel δ) lΣ
+            in
+            S.fromList [
+                (R σ a σNew),
+                (Valid σNew δΣ),
+                (Form σNew δΣ (Neg φ))
+            ] `S.union` sΓ'
+        )
+        sΓ (S.toList sΔ)
+    Nothing -> applyNBa xs sΓ
+applyNBa (_:xs) sΓ = applyNBa xs sΓ
+
+

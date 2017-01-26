@@ -12,14 +12,23 @@ import CoreLang
 import System.IO
 import qualified Data.Map as M
 
+data LParse =
+    At String 
+  | Neg LParse
+  | And LParse LParse
+  | B String LParse
+  | Box String LParse
+  | Or LParse LParse
+  | Imp LParse LParse deriving Show
+
 def :: LanguageDef st
 def = emptyDef{ commentStart = "{*"
               , commentEnd = "*}"
               , identStart = letter
               , identLetter = alphaNum
               , opStart = oneOf "&-B["
-              , opLetter = oneOf "&-B[]U"
-              , reservedOpNames = ["&", "-", "B", "[", "U", "]"]
+              , opLetter = oneOf "-^|>B[]U"
+              , reservedOpNames = ["^", "|", "-", ">", "B", "[", "U", "]"]
               , reservedNames = []
               }
 
@@ -31,29 +40,53 @@ TokenParser{ parens = m_parens
            , semiSep1 = m_semiSep1
            , whiteSpace = m_whiteSpace } = makeTokenParser def
 
-lStatParser :: Parser L
-lStatParser = buildExpressionParser lStatParser_table lStatParser_term <?> "formula"
-lStatParser_table = [
-    [Prefix (m_reservedOp "-" >> return Neg)] ,
-    [Infix (m_reservedOp "&" >> return (:&:)) AssocRight]
+lParseStatParser :: Parser LParse
+lParseStatParser = buildExpressionParser lParseStatParser_table lParseStatParser_term <?> "formula"
+lParseStatParser_table = [
+    [Prefix (m_reservedOp "-" >> return Parser.Neg)] ,
+    [Infix (m_reservedOp ">" >> return Imp) AssocRight] ,
+    [Infix (m_reservedOp "^" >> return And) AssocRight] ,
+    [Infix (m_reservedOp "|" >> return Or) AssocRight]
   ]
 
-lStatParser_term = 
-  try(m_parens lStatParser)
-  <|> do { m_reservedOp "B"
-       ; agt <- m_identifier
-       ; form <- lStatParser
-       ; return (B agt form)
-       }
-  <|> fmap At m_identifier
+lParseStatParser_term = 
+  try(m_parens lParseStatParser)
+  <|> do 
+      m_reservedOp "B"
+      agt <- m_identifier
+      form <- lParseStatParser
+      return (Parser.B agt form)
+  <|> do
+      m_reservedOp "["
+      m <- m_identifier
+      m_reservedOp "]"
+      form <- lParseStatParser
+      return (Box m form)
+  <|> fmap Parser.At m_identifier
 
 
-parseL :: String -> Maybe L
-parseL inp = case parse (m_whiteSpace >> lStatParser) "" inp of
+parseLParse :: String -> Maybe LParse
+parseLParse inp = case parse (m_whiteSpace >> lParseStatParser) "" inp of
   { Left err -> Nothing
    ; Right ans -> Just ans
   }
 
+
+-- parseLStat :: String -> Maybe L
+-- parseLStat inp = case parse (m_whiteSpace >> lParseStatParser) "" inp of
+--   Left err -> print err
+--     -- Nothing
+--   Right ans -> case lParseToLStat ans of
+--     Just f -> print f
+--     Nothing -> print "formula cant be turned into LStat"
+
+parseL :: (M.Map String Model') -> String -> Maybe L
+parseL m inp = case parse (m_whiteSpace >> lParseStatParser) "" inp of
+  Left err -> Nothing
+  Right ans -> lParseToL m ans
+
+parseLStat :: String -> Maybe L
+parseLStat = parseL M.empty
 
 data Model'Parse = W World | Pre World L | R Agt [(World , World)] deriving Show
 
@@ -81,14 +114,36 @@ rParser = do
   set <- setParser
   return $ Parser.R a set
 
+
+lParseToL :: (M.Map String Model') -> LParse -> Maybe L
+lParseToL m (Parser.At p) = return $ CoreLang.At p
+lParseToL m (Parser.Neg (Parser.Neg f)) = lParseToL m f
+lParseToL m (Parser.Neg f) = (lParseToL m f) >>= (return . CoreLang.Neg) 
+lParseToL m (Parser.And f1 f2) = do
+  f1M <- lParseToL m f1
+  f2M <- lParseToL m f2
+  return $ f1M :^: f2M
+lParseToL m (Parser.B agt f) = (lParseToL m f) >>= (return . (CoreLang.B agt)) 
+lParseToL m (Parser.Box mlab f) = do
+  model <- M.lookup mlab m
+  fM <- lParseToL m f
+  return $ (M model) :□: fM
+lParseToL m (Parser.Or f1 f2) = lParseToL m (Parser.Neg (Parser.And (Parser.Neg f1) (Parser.Neg f2)))
+lParseToL m (Parser.Imp f1 f2) = lParseToL m (Or (Parser.Neg f1) f2)
+
+lParseToLStat :: LParse -> Maybe L
+lParseToLStat = lParseToL (M.empty)
+
 preParser = do
   m_reservedOp "Pre"
   m_reservedOp "("
   a <- m_identifier
   m_reservedOp ")"
   m_reservedOp "="
-  form <- lStatParser
-  return $ Pre a form
+  form <- lParseStatParser
+  case lParseToLStat form of 
+    Just formL -> return $ Pre a formL
+    Nothing -> fail "could not turn the formula into an LStat formula"
 
 worldParser = do
   a <- m_identifier

@@ -89,12 +89,32 @@ applyBRule r sΓ = applyRuleA r (toTuples sΓ) sΓ
 
 applyBa :: [(TTerm, TTerm)] -> [Set TTerm] -> [Set TTerm]
 applyBa [] sΓ = sΓ
+applyBa ((((Form σ [] (B a φ)) , (R σ' a' σ1))):xs) sΓ 
+    | σ == σ' && a == a' = applyBa xs $ [
+        S.fromList [
+                (Valid σ1 []),
+                (Form σ1 [] φ)
+            ],
+        S.singleton (Invalid σ1 [])
+    ] `unionMap` sΓ
+    | otherwise = applyBa xs sΓ
+
 applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ 
     | σ == σ' && a == a' = case genModelMapList a lΣ of
-        Just mapSet -> applyBa xs $ foldr 
-            ( \m lst -> (ba m (((Form σ lΣ (B a φ)) , (R σ' a' σ1)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
-            sΓ (S.toList mapSet)
-        Nothing -> applyBa xs sΓ
+    Just sΔ -> applyBa xs $ foldr
+        ( \δ sΓ' -> let δΣ = map (updateModel δ) lΣ in
+            [
+                S.fromList [
+                        (Valid σ1 δΣ),
+                        (Form σ1 δΣ φ)
+                    ],
+                S.singleton (Invalid σ1 δΣ)
+            ] `unionMap` sΓ'
+        )
+        sΓ (S.toList sΔ) 
+            -- ( \m lst -> (ba m (((Form σ lΣ (B a φ)) , (R σ' a' σ1)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+            -- sΓ (S.toList mapSet)
+    Nothing -> applyBa xs sΓ
     | otherwise = applyBa xs sΓ
 applyBa ((((R σ' a' σ1) , (Form σ lΣ (B a φ)))):xs) sΓ = 
         applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ
@@ -112,18 +132,27 @@ newLab set = (biggestLab (S.toList set) 0) + 1
 
 applyNBa :: [TTerm] -> Set TTerm -> Set TTerm
 applyNBa [] sΓ = sΓ
-applyNBa ((Form σ lΣ (Neg (B a φ))):xs) sΓ = case genModelMapList a lΣ of
+applyNBa ( (Form σ [] (Neg (B a φ))) : xs ) sΓ = applyNBa xs $
+    S.fromList [
+        (R σ a σNew),
+        (Valid σNew []),
+        (Form σNew [] (Neg φ))
+    ] `S.union` sΓ
 
-applyNBa ((Form σ lΣ (Neg (B a φ))):xs) sΓ = case genModelMapList a lΣ of
-    -- Just [] -> 
-    --     applyNBa xs [ (head sΓ)  `S.union` (S.fromList [
-    --     (R σ a (newLab $ (head sΓ))),
-    --     (Valid (newLab $ (head sΓ)) []),
-    --     (Form (newLab $ (head sΓ)) [] (Neg φ))
-    -- ])  ]
-    Just mapSet -> applyNBa xs $ foldr 
-        ( \m lst -> (negBa m (newLab $ head lst) (Form σ lΣ (Neg (B a φ)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
-        sΓ (S.toList mapSet)
+    where σNew = newLab sΓ
+applyNBa ( (Form σ lΣ (Neg (B a φ))) : xs ) sΓ = case genModelMapList a lΣ of
+    Just sΔ -> applyNBa xs $ foldr 
+        ( \δ sΓ' -> let 
+                σNew = newLab sΓ'
+                δΣ = map (updateModel δ) lΣ
+            in
+            S.fromList [
+                (R σ a σNew),
+                (Valid σNew δΣ),
+                (Form σNew δΣ (Neg φ))
+            ] `S.union` sΓ'
+        )
+        sΓ (S.toList sΔ)
     Nothing -> applyNBa xs sΓ
 applyNBa (_:xs) sΓ = applyNBa xs sΓ
 
@@ -145,9 +174,6 @@ getRuleName Ba = "ba"
 getRuleName NBa = "negBa"
 
 
--- gamma = S.fromList [ "x" , "y" ]
--- r1 s = [S.singleton ('a':s), S.singleton ('a':s)]
-
 
 rules = [ 
         (SimpU "and" Rules.and), (SimpU "negNeg" negNeg), 
@@ -159,8 +185,7 @@ rules = [
 
         (SimpU "negAnd" negAnd), (SimpU "boxM" boxM), (SimpU "invalid" invalid),
         (SimpU "negBoxUnion" negBoxUnion), 
-        Ba,
-        NBa
+        Ba, NBa
     ]
 
 getRule :: Set String -> RuleThunk
@@ -181,10 +206,8 @@ runTab (sΓ, lab) = trace ("labels:" ++ sshow lab ++ "\n") $
             SimpU l r -> aux l (applyURule r sΓ)
             SimpB l r -> aux l (applyBRule r sΓ)
             Ba -> aux "ba" (applyBa (toTuples sΓ) [sΓ])
-            -- NBa -> aux "negBa" (applyNBa (S.toList sΓ) [sΓ])
+            NBa -> aux "negBa" [applyNBa (S.toList sΓ) sΓ]
     where
-        -- aux l [sΓ'] | sΓ == sΓ' = runTab (sΓ , S.insert l lab) -- `debug` ("rule (" ++ l ++ ") not applicable, adding to label set and trying again with: "++ sshow sΓ)
-        --             | otherwise = runTab (sΓ' , S.empty)  -- `debug` ("rule (" ++ l ++ ") applied, new set is: "++ sshow sΓ')
         aux l sΓlst = foldMap 
             (\sΓ' -> 
                 if sΓ == sΓ' then runTab (sΓ' , S.insert l lab) 

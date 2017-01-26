@@ -19,7 +19,7 @@ data LStatA atm agt ldyn =
   | B agt (LStatA atm agt ldyn)
   | ldyn :□: (LStatA atm agt ldyn)
 
-data ModelA' w agt atm = Model w (Map (w , agt) (Set w)) (Map w (LStatA atm agt (LDynA (ModelA' w agt atm))))
+data ModelA' w agt atm = Model w (Map agt (Set (w , w))) (Map w (LStatA atm agt (LDynA (ModelA' w agt atm))))
 
 type Atm = String
 type Agt = String

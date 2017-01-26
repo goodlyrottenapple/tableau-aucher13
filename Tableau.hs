@@ -2,7 +2,7 @@ module Tableau where
 
 import CoreLang
 import Rules
-import Parser (parseL, parseLStat)
+import Parser (parseL, parseLStat, parseModel')
 
 import Debug.Trace
 
@@ -13,6 +13,7 @@ import Data.Map (Map)
 import Data.Maybe (fromJust)
 import Data.List (intercalate)
 
+import qualified Data.Map as M
 
 debug = flip trace
 
@@ -29,28 +30,110 @@ toTuples s = aux (S.toList s)
         aux (x:xs) = [ (x, y) | y <- xs ] ++ aux xs
 
 
-unMap :: Ord a => [Set a] -> [Set a] -> [Set a]
-unMap [] s = s
-unMap s [] = []
-unMap s (x:xs) = map (S.union x) s ++ (unMap s xs)
+unionMap :: Ord a => [Set a] -> [Set a] -> [Set a]
+unionMap [] s = s
+unionMap s [] = []
+unionMap s (x:xs) = map (S.union x) s ++ (unionMap s xs)
+
+
+getwRa :: Agt -> Model' -> Maybe (World, [World])
+getwRa agt (Model w r _) = do
+    ra <- M.lookup agt r
+    let us = [u | (w' , u) <- S.toList ra, w == w'] in
+        if null us then Nothing else return (w , us)
+
+getwRa's :: Agt -> [Model'] -> Maybe [(World, [World])]
+getwRa's agt [] = Just []
+getwRa's agt ms = mapM (getwRa agt) ms
+
+aux1 :: (a , [b]) -> [(a , b)]
+aux1 (a , bs) = [ (a, b) | b <- bs ]
+
+prod :: [a] -> [[a]] -> [[a]]
+prod [] ys = []
+prod (x:xs) ys = [x:y | y <- ys] ++ (prod xs ys)
+
+aux2 :: [(a , [b])] -> [[(a , b)]]
+aux2 [] = []
+aux2 [x] = map (:[]) $ aux1 x
+aux2 (x:xs) = aux1 x `prod` (aux2 xs)
+
+genModelMapList :: Agt -> [Model'] -> Maybe (Set (Map World World))
+genModelMapList agt ms = do
+    lst <- getwRa's agt ms
+    return $ S.fromList $ map M.fromList $ aux2 lst
+
+
+testGenModelMapList fileName ag = do 
+  contents <- readFile fileName
+
+  -- contents <- hGetContents handle
+  case parseModel' contents of
+    Just res -> do
+        print res
+        print $ getwRa ag $ head (M.elems res)
+        print $ getwRa's ag (M.elems res)
+        print $ genModelMapList ag (M.elems res)
+    Nothing -> print $ genModelMapList "a1" []
+
 
 -- aggresively try aplying the rule r to all TTerms in the set Γ
 applyRuleA :: (Ord a, Show a) => (b -> [Set a]) -> [b] -> Set a -> [Set a]
 applyRuleA rule lst sΓ = S.toList $ S.fromList $ foldr 
- (\tterm lst -> (rule tterm) `unMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+ ( \tterm lst -> (rule tterm) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
  [sΓ] lst
 
 applyURule r sΓ = applyRuleA r (S.toList sΓ) sΓ
 applyBRule r sΓ = applyRuleA r (toTuples sΓ) sΓ
 
--- sat :: Set TTerm -> Set TTerm -> Bool
--- sat orig new = orig == new || Bot `S.member` new
+
+applyBa :: [(TTerm, TTerm)] -> [Set TTerm] -> [Set TTerm]
+applyBa [] sΓ = sΓ
+applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ 
+    | σ == σ' && a == a' = case genModelMapList a lΣ of
+        Just mapSet -> applyBa xs $ foldr 
+            ( \m lst -> (ba m (((Form σ lΣ (B a φ)) , (R σ' a' σ1)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+            sΓ (S.toList mapSet)
+        Nothing -> applyBa xs sΓ
+    | otherwise = applyBa xs sΓ
+applyBa ((((R σ' a' σ1) , (Form σ lΣ (B a φ)))):xs) sΓ = 
+        applyBa ((((Form σ lΣ (B a φ)) , (R σ' a' σ1))):xs) sΓ
+applyBa (_:xs) sΓ = applyBa xs sΓ
+
+
+newLab :: Set TTerm -> Lab
+newLab set = (biggestLab (S.toList set) 0) + 1
+    where
+        biggestLab [] acc = acc
+        biggestLab ((Form l _ _):xs) acc | l > acc = biggestLab xs l
+                                         | otherwise = biggestLab xs acc
+        biggestLab (_:xs) acc = biggestLab xs acc                                   
+
+
+applyNBa :: [TTerm] -> Set TTerm -> Set TTerm
+applyNBa [] sΓ = sΓ
+applyNBa ((Form σ lΣ (Neg (B a φ))):xs) sΓ = case genModelMapList a lΣ of
+
+applyNBa ((Form σ lΣ (Neg (B a φ))):xs) sΓ = case genModelMapList a lΣ of
+    -- Just [] -> 
+    --     applyNBa xs [ (head sΓ)  `S.union` (S.fromList [
+    --     (R σ a (newLab $ (head sΓ))),
+    --     (Valid (newLab $ (head sΓ)) []),
+    --     (Form (newLab $ (head sΓ)) [] (Neg φ))
+    -- ])  ]
+    Just mapSet -> applyNBa xs $ foldr 
+        ( \m lst -> (negBa m (newLab $ head lst) (Form σ lΣ (Neg (B a φ)))) `unionMap` lst )--`debug` (sshow $ S.fromList (rule tterm)) ) 
+        sΓ (S.toList mapSet)
+    Nothing -> applyNBa xs sΓ
+applyNBa (_:xs) sΓ = applyNBa xs sΓ
+
+
 
 data RuleThunk = 
     SimpU String URule 
   | SimpB String BRule 
-  | Ba (Map World World)
-  | NBa (Map World World)
+  | Ba
+  | NBa
 
 instance Show RuleThunk where
     show = getRuleName
@@ -58,8 +141,8 @@ instance Show RuleThunk where
 getRuleName :: RuleThunk -> String
 getRuleName (SimpU s _) = s
 getRuleName (SimpB s _) = s
-getRuleName (Ba _) = "ba"
-getRuleName (NBa _) = "negBa"
+getRuleName Ba = "ba"
+getRuleName NBa = "negBa"
 
 
 -- gamma = S.fromList [ "x" , "y" ]
@@ -75,7 +158,9 @@ rules = [
         (SimpB "bot" bot), (SimpB "clash" clash), 
 
         (SimpU "negAnd" negAnd), (SimpU "boxM" boxM), (SimpU "invalid" invalid),
-        (SimpU "negBoxUnion" negBoxUnion)
+        (SimpU "negBoxUnion" negBoxUnion), 
+        Ba,
+        NBa
     ]
 
 getRule :: Set String -> RuleThunk
@@ -95,17 +180,17 @@ runTab (sΓ, lab) = trace ("labels:" ++ sshow lab ++ "\n") $
         case getRule lab of
             SimpU l r -> aux l (applyURule r sΓ)
             SimpB l r -> aux l (applyBRule r sΓ)
+            Ba -> aux "ba" (applyBa (toTuples sΓ) [sΓ])
+            -- NBa -> aux "negBa" (applyNBa (S.toList sΓ) [sΓ])
     where
         -- aux l [sΓ'] | sΓ == sΓ' = runTab (sΓ , S.insert l lab) -- `debug` ("rule (" ++ l ++ ") not applicable, adding to label set and trying again with: "++ sshow sΓ)
         --             | otherwise = runTab (sΓ' , S.empty)  -- `debug` ("rule (" ++ l ++ ") applied, new set is: "++ sshow sΓ')
-        aux l sΓlst = 
-            foldMap 
-                (\sΓ' -> 
-                    if sΓ == sΓ' then runTab (sΓ' , S.insert l lab) 
-                    else runTab (sΓ' , S.empty) `debug` ("succesfully applied " ++ l ++ "\n\n")
-                )
-
-                sΓlst `debug` ("branches: " ++ intercalate "\n" (map sshow sΓlst))
+        aux l sΓlst = foldMap 
+            (\sΓ' -> 
+                if sΓ == sΓ' then runTab (sΓ' , S.insert l lab) 
+                else runTab (sΓ' , S.empty) `debug` ("succesfully applied " ++ l ++ "\n\n")
+            )
+            sΓlst `debug` ("branches: " ++ intercalate "\n" (map sshow sΓlst))
 
 isValidStat str = do
     case parseLStat str of 

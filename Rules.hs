@@ -8,8 +8,6 @@ import qualified Data.Set as S
 import Data.Map (Map, (!))
 import qualified Data.Map as M
 
-import Data.Functor.Identity
-
 -- box :: Model' -> L -> L
 -- box m l = Box (M m) l
 

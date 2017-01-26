@@ -11,6 +11,7 @@ import CoreLang
 -- import Text.Parsec.Combinator
 import System.IO
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 data LParse =
     At String 
@@ -178,12 +179,19 @@ genModel' defs = do
     getW _ = Nothing
 
     getR [] = M.empty
-    getR ((Parser.R agt set) : defs) = addRa agt set $ getR defs
+    getR ((Parser.R agt set) : defs) = M.insert agt (S.fromList set) $ getR defs
     getR (_ : defs) = getR defs
 
     getPre [] = M.empty
     getPre ((Pre w form) : defs) = M.insert w form $ getPre defs
     getPre (_ : defs) = getPre defs
+
+
+parseModel' :: String -> Maybe (M.Map String Model')
+parseModel' inp = case parse (m_whiteSpace >> modelFileParser) "" inp of
+  Left err -> Nothing
+  Right ans -> return ans
+
 
 readWorldFile fileName = do 
   contents <- readFile fileName

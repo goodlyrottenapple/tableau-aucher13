@@ -283,30 +283,37 @@ newLab set = (biggestLab (S.toList set) 0) + 1
 -- (σ Ra σnew)
 -- (σnew M′1,u′1;...;M′i,u′i OK)
 -- (σnew M′1,u′1;...;M′i,u′i ¬φ)
-applyNBa :: [TTerm] -> Set TTerm -> Set TTerm
-applyNBa [] sΓ = sΓ
-applyNBa ( (Form σ [] (Neg (B a φ))) : xs ) sΓ = applyNBa xs $
-    S.fromList [
-        (R σ a σNew),
-        (Valid σNew []),
-        (Form σNew [] (Neg φ))
-    ] `S.union` sΓ
-
-    where σNew = newLab sΓ
-applyNBa ( (Form σ lΣ (Neg (B a φ))) : xs ) sΓ = case genModelMapList a lΣ of
-    Just sΔ -> applyNBa xs $ foldr 
-        ( \δ sΓ' -> let 
-                σNew = newLab sΓ'
-                δΣ = map (updateModel δ) lΣ
-            in
-            S.fromList [
+applyNBa :: [TTerm] -> Set TTerm -> Set TTerm -> (Set TTerm , Set TTerm)
+applyNBa [] sΓ nBaLabS = (sΓ , nBaLabS)
+applyNBa ( (Form σ [] (Neg (B a φ))) : xs ) sΓ nBaLabS 
+    | (Form σ [] (Neg (B a φ))) `S.notMember` nBaLabS = let σNew = newLab sΓ in
+        applyNBa 
+            xs
+            (S.fromList [
                 (R σ a σNew),
-                (Valid σNew δΣ),
-                (Form σNew δΣ (Neg φ))
-            ] `S.union` sΓ'
-        )
-        sΓ (S.toList sΔ)
-    Nothing -> applyNBa xs sΓ
-applyNBa (_:xs) sΓ = applyNBa xs sΓ
+                (Valid σNew []),
+                (Form σNew [] (Neg φ))
+            ] `S.union` sΓ) 
+            (S.insert (Form σ [] (Neg (B a φ))) nBaLabS) 
+    | otherwise = applyNBa xs sΓ nBaLabS
+applyNBa ( (Form σ lΣ (Neg (B a φ))) : xs ) sΓ nBaLabS
+    | (Form σ lΣ (Neg (B a φ))) `S.notMember` nBaLabS =
+        case genModelMapList a lΣ of
+            Just sΔ -> applyNBa xs (foldr 
+                ( \δ sΓ' -> let 
+                        σNew = newLab sΓ'
+                        δΣ = map (updateModel δ) lΣ
+                    in
+                    S.fromList [
+                        (R σ a σNew),
+                        (Valid σNew δΣ),
+                        (Form σNew δΣ (Neg φ))
+                    ] `S.union` sΓ'
+                )
+                sΓ (S.toList sΔ))
+                (S.insert (Form σ lΣ (Neg (B a φ))) nBaLabS)
+            Nothing -> applyNBa xs sΓ (S.insert (Form σ lΣ (Neg (B a φ))) nBaLabS)
+    | otherwise = applyNBa xs sΓ nBaLabS
+applyNBa (_:xs) sΓ nBaLabS = applyNBa xs sΓ nBaLabS
 
 

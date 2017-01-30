@@ -202,4 +202,4 @@ readWorldFile fileName = do
       return M.empty
     Right ans -> return ans
 
-  print res
+  return res

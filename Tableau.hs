@@ -2,7 +2,7 @@ module Tableau where
 
 import CoreLang
 import Rules
-import Parser (parseL, parseLStat, parseModel')
+import Parser (parseL, parseLStat, readWorldFile)
 
 import Debug.Trace
 
@@ -81,7 +81,7 @@ mapFst :: (a -> b) -> (a, c) -> (b, c)
 mapFst f (a , b) = (f a , b)
 
 runTab :: Γ -> Maybe (Set TTerm)
-runTab (sΓ, lab, nBa) = trace info $
+runTab (sΓ, lab, nBa) = --trace info $
     if Bot `S.member` sΓ then Nothing `debug` ("closed branch: " ++ sshow sΓ)
     else if sat lab && nBa == (filterNBa sΓ) then Just sΓ `debug` ("open branch: " ++ sshow sΓ ++ "\nlabels: " ++ sshow lab)
     else -- trace ("applying rule " ++ getRuleName (getRule lab) ++ "\n\n") $ 
@@ -91,12 +91,21 @@ runTab (sΓ, lab, nBa) = trace info $
             Ba -> aux ["ba"] (applyBa (toTuples sΓ) [sΓ] , S.empty)
             NBa -> aux [] $ mapFst (:[]) (applyNBa (S.toList sΓ) sΓ nBa)
     where
-        aux l (sΓlst , nBa') = foldMap 
-            (\sΓ' -> 
-                if sΓ == sΓ' then runTab (sΓ' , ((S.fromList l) `S.union` lab), nBa `S.union` nBa') 
-                else runTab (sΓ' , S.empty, nBa `S.union` nBa') `debug` ("successfully applied " ++ (if null l then "nBa" else head l) ++ "\n\n")
-            )
-            sΓlst -- `debug` ("branches: " ++ intercalate "\n" (map sshow sΓlst))
+        aux :: [String] -> ([Set TTerm] , Set TTerm) -> Maybe (Set TTerm)
+        aux _ ([] , _) = Nothing
+        aux l ((sΓ':rest) , nBa') =
+            let res =   if sΓ == sΓ' then runTab (sΓ' , ((S.fromList l) `S.union` lab), nBa `S.union` nBa') 
+                        else runTab (sΓ' , S.empty, nBa `S.union` nBa') `debug` ("successfully applied " ++ (if null l then "nBa" else head l) ++ "\n\n") in
+            case res of 
+                Nothing -> aux l (rest , nBa')
+                r -> r
+
+            -- foldMap 
+            --     (\sΓ' -> 
+            --         if sΓ == sΓ' then runTab (sΓ' , ((S.fromList l) `S.union` lab), nBa `S.union` nBa') 
+            --         else runTab (sΓ' , S.empty, nBa `S.union` nBa') `debug` ("successfully applied " ++ (if null l then "nBa" else head l) ++ "\n\n")
+            --     )
+            --     sΓlst -- `debug` ("branches: " ++ intercalate "\n" (map sshow sΓlst))
 
         info = 
             ("labels:" ++ sshow lab ++ "\n") ++
@@ -105,8 +114,14 @@ runTab (sΓ, lab, nBa) = trace info $
             ("filtered Γ" ++ sshow (filterNBa sΓ) ++ "\n\n")
 
 isValidStat str = do
-    case parseLStat str of 
-        Just res -> do
-            show res
-            -- putStr $ sshow $ fst $ Tableau.init res
-            return $ runTab $ Tableau.init (Neg res)
+    res <- parseLStat str
+    return $ do
+        show res
+        return $ runTab $ Tableau.init (Neg res)
+
+isValid modelPath str = do
+    model <- readWorldFile modelPath
+    return $ do
+        res <- parseL model str
+        -- print res
+        runTab $ Tableau.init (Neg res)

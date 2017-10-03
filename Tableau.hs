@@ -81,7 +81,7 @@ mapFst :: (a -> b) -> (a, c) -> (b, c)
 mapFst f (a , b) = (f a , b)
 
 runTab :: Γ -> Maybe (Set TTerm)
-runTab (sΓ, lab, nBa) = --trace info $
+runTab (sΓ, lab, nBa) = -- trace info $
     if Bot `S.member` sΓ then Nothing `debug` ("closed branch: " ++ sshow sΓ)
     else if sat lab && nBa == (filterNBa sΓ) then Just sΓ `debug` ("open branch: " ++ sshow sΓ ++ "\nlabels: " ++ sshow lab)
     else -- trace ("applying rule " ++ getRuleName (getRule lab) ++ "\n\n") $ 
@@ -95,7 +95,8 @@ runTab (sΓ, lab, nBa) = --trace info $
         aux _ ([] , _) = Nothing
         aux l ((sΓ':rest) , nBa') =
             let res =   if sΓ == sΓ' then runTab (sΓ' , ((S.fromList l) `S.union` lab), nBa `S.union` nBa') 
-                        else runTab (sΓ' , S.empty, nBa `S.union` nBa') `debug` ("successfully applied " ++ (if null l then "nBa" else head l) ++ "\n\n") in
+                        else runTab (sΓ' , S.empty, nBa `S.union` nBa') 
+                            `debug` ("successfully applied " ++ (if null l then "nBa" else head l) ++ "\n\n" ++ succInfo (sΓ' `S.difference` sΓ)) in
             case res of 
                 Nothing -> aux l (rest , nBa')
                 r -> r
@@ -107,6 +108,7 @@ runTab (sΓ, lab, nBa) = --trace info $
             --     )
             --     sΓlst -- `debug` ("branches: " ++ intercalate "\n" (map sshow sΓlst))
 
+        succInfo s = ("added tterms:" ++ sshow s ++ "\n")
         info = 
             ("labels:" ++ sshow lab ++ "\n") ++
             ("nBa's:" ++ sshow nBa ++ "\n") ++

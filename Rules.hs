@@ -25,7 +25,7 @@ type Rule inp = inp -> [Set TTerm]
 
 type URule = Rule TTerm
 type BRule = Rule (TTerm , TTerm)
--- type BRuleB = TTerm -> TTerm -> (Set TTerm , Set TTerm)
+
 
 -- (σ Σ′ φ ∧ ψ)
 -- ------------
